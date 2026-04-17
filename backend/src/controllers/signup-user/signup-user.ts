@@ -1,0 +1,65 @@
+import { Response } from "express"
+import { Secret, sign } from "jsonwebtoken"
+import validator from "validator"
+
+import { UserTypes } from "@/models/user"
+
+import { badRequest, Conflict, registered } from "../helpers"
+import { HttpRequest, HttpResponse, IController } from "../protocols"
+import { ISignupUserRepository, SignupUserParams } from "./protocols"
+
+export class SignupUserController implements IController {
+  constructor(private readonly signupUserRepository: ISignupUserRepository) {}
+  async handle(
+    httpRequest: HttpRequest<SignupUserParams>,
+    res: Response<unknown>,
+  ): Promise<HttpResponse<UserTypes | string>> {
+    try {
+      const requiredFields = ["email", "password"]
+
+      for (const field of requiredFields) {
+        if (!httpRequest?.body?.[field as keyof SignupUserParams]?.length) {
+          return badRequest(`Поле ${field} требуется`)
+        }
+      }
+
+      const emailIsValid = validator.isEmail(httpRequest.body!.email)
+
+      if (!emailIsValid) {
+        return badRequest("Неверный емайл")
+      }
+
+      const user = await this.signupUserRepository.signupUser(httpRequest.body!)
+
+      const expirationDate = new Date()
+      expirationDate.setDate(expirationDate.getDate() + 30)
+
+      const secret = process.env.SECRET as Secret
+
+      const token = sign(
+        {
+          id: user.id,
+        },
+        secret,
+      )
+
+      res.cookie("id", user.id, {
+        httpOnly: true,
+        secure: true,
+        sameSite: "none",
+        expires: expirationDate,
+      })
+
+      res.cookie("token", token, {
+        httpOnly: true,
+        secure: true,
+        sameSite: "none",
+        expires: expirationDate,
+      })
+
+      return registered<UserTypes>(user)
+    } catch {
+      return Conflict()
+    }
+  }
+}
